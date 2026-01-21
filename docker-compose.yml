@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:17
+    container_name: radiofy_db
+    environment:
+      # Default credentials; will be overridden by .env if present
+      POSTGRES_USER: ${DB_USER:?missing DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS:?missing DB_PASS}
+      POSTGRES_DB: ${DB_NAME:-radiofy_db}
+    ports:
+      # Publishes container's 5432 to host (defaults to 5432)
+      - "${DB_PORT_PUBLISH:-5432}:5432"
+    healthcheck:
+      # Wait until Postgres is ready to accept connections
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:?missing DB_USER} -d ${DB_NAME:-radiofy_db} -h localhost -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Allow running this service under both compose profiles
+    profiles: ["local"]
+    restart: unless-stopped
+    volumes:
+      # Persist database files between restarts
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
