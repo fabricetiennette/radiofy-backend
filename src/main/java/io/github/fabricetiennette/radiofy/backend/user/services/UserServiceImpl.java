@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 
@@ -18,6 +19,9 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void register(String email, String rawPassword) {
+        if (repo.existsByEmail(email)) {
+            throw new IllegalArgumentException("Email already in use");
+        }
 
         var user = new UserAccount();
         user.setEmail(email);
@@ -30,5 +34,13 @@ public class UserServiceImpl implements UserService {
     @Override
     public Optional<UserAccount> findByEmail(String email) {
         return repo.findByEmail(email);
+    }
+
+    @Override
+    public void markEmailVerified(String email) {
+        repo.findByEmail(email).ifPresent(user -> {
+            user.setEmailVerifiedAt(Instant.now());
+            repo.save(user);
+        });
     }
 }

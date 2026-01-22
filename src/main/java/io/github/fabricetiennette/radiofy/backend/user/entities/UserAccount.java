@@ -42,8 +42,15 @@ public class UserAccount {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "email_verified_at")
+    private Instant emailVerifiedAt;
+
     @PrePersist
     void onCreate() {
         if (createdAt == null) createdAt = Instant.now();
+    }
+
+    public boolean isEmailVerified() {
+        return emailVerifiedAt != null;
     }
 }
