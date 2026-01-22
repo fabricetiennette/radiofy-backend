@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:55432/radiofy_db}
+    username: ${SPRING_DATASOURCE_USERNAME:radiofy}
+    password: ${SPRING_DATASOURCE_PASSWORD:radiofy}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  port: 8081
+
+  flyway:
+    enabled: true
+
+logging:
+  level:
+    org.springframework.core.env: INFO
