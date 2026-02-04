@@ -1,4 +1,4 @@
-package io.github.fabricetiennette.radiofy.backend.auth.otp.controllers;
+package io.github.fabricetiennette.radiofy.backend.auth.controllers;
 
 
 import io.github.fabricetiennette.radiofy.backend.auth.otp.services.PasswordResetService;
@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -30,11 +31,11 @@ public class PasswordResetController {
     // ---------- Endpoints ----------
 
     /**
-     * Request a password-reset OTP to be sent to the email.
+     * Request a password-reset OTP to be sent to the email (6 digits).
      * Always returns 204 to avoid user enumeration.
      * If security.otp.echo=true, returns 200 {"code": "..."} (dev convenience only).
      */
-    @PostMapping("/forgot")
+    @PostMapping("/forgot-password")
     public ResponseEntity<?> forgot(@Valid @RequestBody ForgotPasswordRequest req) {
         String code = service.requestPasswordReset(req.email());
         if (echoOtp) {
@@ -44,10 +45,10 @@ public class PasswordResetController {
     }
 
     /**
-     * Reset password by supplying the OTP code received by email/SMS.
-     * Returns 204 on success. On invalid/expired code returns 400.
+     * Reset password by supplying the 6-digit OTP code received by email/SMS.
+     * Returns 204 on success. On invalid/expired code returns 422.
      */
-    @PostMapping("/reset")
+    @PostMapping("/reset-password")
     public ResponseEntity<Void> reset(@Valid @RequestBody ResetPasswordRequest req) {
         service.resetPasswordWithCode(req.email(), req.code(), req.newPassword());
         return ResponseEntity.noContent().build();
@@ -61,26 +62,36 @@ public class PasswordResetController {
 
     public record ResetPasswordRequest(
             @NotBlank @Email String email,
-            // 4–10 digits; adjust if you configured a different length
-            @NotBlank @Pattern(regexp = "\\d{4,10}") String code,
-            @NotBlank String newPassword
+            // 6 digits (standard OTP)
+            @NotBlank @Pattern(regexp = "\\d{6}") String code,
+            @NotBlank
+            @Size(min = 8, max = 72) // 72 is a common upper bound (e.g., bcrypt input size considerations)
+            @Pattern(
+                    regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$",
+                    message = "Password must contain at least one lowercase letter, one uppercase letter, and one digit"
+            )
+            String newPassword
     ) { }
 
     // ---------- Local exception mapping (simple JSON errors) ----------
 
     @ExceptionHandler(PasswordResetService.InvalidOtp.class)
     public ResponseEntity<Map<String, Object>> handleInvalidOtp() {
-        return ResponseEntity.badRequest().body(Map.of(
-                "error", "invalid_otp",
-                "message", "The code is invalid or expired."
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of(
+                "type", "https://errors.radiofy.local/invalid-otp",
+                "title", "Invalid OTP",
+                "status", 422,
+                "detail", "The code is invalid or expired."
         ));
     }
 
     @ExceptionHandler(PasswordResetService.TooManyRequests.class)
     public ResponseEntity<Map<String, Object>> handleTooMany(PasswordResetService.TooManyRequests ex) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
-                "error", "too_many_requests",
-                "message", ex.getMessage()
+                "type", "https://errors.radiofy.local/too-many-requests",
+                "title", "Too many requests",
+                "status", 429,
+                "detail", ex.getMessage()
         ));
     }
 }
