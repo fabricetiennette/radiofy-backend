@@ -82,7 +82,7 @@ public class SmtpEmailSender {
                                 <div class="container">
                                   <div class="header">
                                     <!--<div class="header-title">Verify your identity</div>-->
-                                    <img src="https://birdify-asset.s3.eu-west-3.amazonaws.com/birdify.png" alt="Birdify" class="logo">
+                                    <img src="https://radiofy-asset.s3.eu-west-3.amazonaws.com/RadiofyEmail.png" alt="Radiofy" class="logo">
                                   </div>
                                   <div class="content">
                                     <p class="paragraph">Hello,</p>
@@ -187,7 +187,7 @@ public class SmtpEmailSender {
                               <div class="wrapper">
                                 <div class="container">
                                   <div class="header">
-                                    <img src="https://birdify-asset.s3.eu-west-3.amazonaws.com/birdify.png" alt="Birdify" class="logo">
+                                    <img src="https://radiofy-asset.s3.eu-west-3.amazonaws.com/RadiofyEmail.png" alt="Radiofy" class="logo">
                                   </div>
                                   <div class="content">
                                     <p class="paragraph">Hello,</p>

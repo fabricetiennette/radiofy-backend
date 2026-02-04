@@ -48,25 +48,13 @@ public class AuthController {
             // 1) Create the user account
             userService.register(req.email(), req.password());
 
-            // 2) Immediately issue a verification code (DEV ONLY: returned in body)
-            // Issue the email
+            // 2) Issue an email verification code
             otpService.issueEmailVerificationCode(req.email());
 
-            // 3) Generate tokens
-            //    - Access: JWT signed for the email
-            //    - Refresh: DB-backed random token (raw returned to client, hash stored in DB)
-            String access = jwt.generateAccess(req.email(), Map.of("typ", "access"));
-
-            var u = userService.findByEmail(req.email())
-                    .orElseThrow(() -> new IllegalStateException("User not found after registration"));
-            String ip = httpRequest.getRemoteAddr();
-            String userAgent = httpRequest.getHeader("User-Agent");
-            String refresh = refreshTokenService.issueInitialRefreshToken(u, ip, userAgent);
-
-            // 4) Return tokens and (DEV ONLY) the verification code
-            return ResponseEntity.ok(Map.of(
-                    "access", access,
-                    "refresh", refresh
+            // 3) Registration successful. Email verification is required before login.
+            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
+                    "message", "Registration successful. Please verify your email.",
+                    "next", "/v1/auth/verify-email"
             ));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(
@@ -95,7 +83,7 @@ public class AuthController {
                             "Forbidden",
                             "EMAIL_NOT_VERIFIED",
                             "Email is not verified.",
-                            "/api/v1/auth/verify-email/resend"
+                            "/v1/auth/verify-email/resend"
                     )
             );
         }
@@ -133,29 +121,51 @@ public class AuthController {
     }
 
     @PostMapping("/verify-email")
-    public ResponseEntity<Void> verifyEmail(@RequestBody VerifyEmailRequest req) {
+    public ResponseEntity<?> verifyEmail(@RequestBody VerifyEmailRequest req, HttpServletRequest httpRequest) {
         // 1) Validate input (basic null/blank)
         if (req.email() == null || req.email().isBlank() || req.code() == null || req.code().isBlank()) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(
+                    ErrorResponse.of("Bad Request", "INVALID_REQUEST", "Email and code are required.", httpRequest.getRequestURI())
+            );
         }
 
-        // 2) Delegate to service that:
-        //    - fetches OTP by email
-        //    - checks code, expiry, attempts
-        //    - marks user as emailVerified = true on success
-        //    - deletes/invalidates OTP
-        //    - throws a specific exception on failure
         try {
+            // 2) Validate the OTP + mark user as verified (done in service)
             otpService.verifyEmailCode(req.email(), req.code());
-            return ResponseEntity.noContent().build(); // 204 on success
+
+            // 3) Load user and issue tokens (same behavior as /login)
+            var userOpt = userService.findByEmail(req.email());
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                        ErrorResponse.of("Not Found", "USER_NOT_FOUND", "User not found.", httpRequest.getRequestURI())
+                );
+            }
+
+            var u = userOpt.get();
+
+            String access = jwt.generateAccess(u.getEmail(), Map.of("typ", "access"));
+
+            String ip = httpRequest.getRemoteAddr();
+            String userAgent = httpRequest.getHeader("User-Agent");
+            String refresh = refreshTokenService.issueInitialRefreshToken(u, ip, userAgent);
+
+            return ResponseEntity.ok(AuthResponse.of(access, refresh));
         } catch (OtpService.OtpNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build(); // no OTP found for email
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                    ErrorResponse.of("Not Found", "OTP_NOT_FOUND", "No verification code found for this email.", httpRequest.getRequestURI())
+            );
         } catch (OtpService.OtpExpiredException e) {
-            return ResponseEntity.status(HttpStatus.GONE).build(); // expired code
+            return ResponseEntity.status(HttpStatus.GONE).body(
+                    ErrorResponse.of("Gone", "OTP_EXPIRED", "Verification code has expired.", httpRequest.getRequestURI())
+            );
         } catch (OtpService.OtpInvalidException e) {
-            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).build(); // wrong code
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+                    ErrorResponse.of("Unprocessable Entity", "OTP_INVALID", "Invalid verification code.", httpRequest.getRequestURI())
+            );
         } catch (OtpService.AlreadyVerifiedException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).build(); // email already verified
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                    ErrorResponse.of("Conflict", "EMAIL_ALREADY_VERIFIED", "Email is already verified.", httpRequest.getRequestURI())
+            );
         }
     }
 

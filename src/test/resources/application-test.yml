@@ -1,0 +1,13 @@
+spring:
+  mail:
+    host: localhost
+    port: 1025
+
+security:
+  jwt:
+    secret: "test-test-test-test-test-test-test-test"
+    access-exp-min: 15
+    refresh:
+      lifetime: 43200
+      purge:
+        cron: "0 0 3 * * *"
