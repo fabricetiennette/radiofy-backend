@@ -44,4 +44,6 @@ jobs:
           cache: maven
 
       - name: Maven test
+        env:
+          SPRING_PROFILES_ACTIVE: test
         run: ./mvnw -B test

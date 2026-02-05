@@ -4,18 +4,66 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:radiofy}
     password: ${SPRING_DATASOURCE_PASSWORD:radiofy}
     driver-class-name: org.postgresql.Driver
-
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100       # hard cap to avoid abuse
+        one-indexed-parameters: false
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
 
-server:
-  port: 8081
-
   flyway:
     enabled: true
 
+  mail:
+    host: ${SMTP_HOST}
+    port: ${SMTP_PORT}
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: true
+      mail.smtp.starttls.enable: false
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET:?missing SECURITY_JWT_SECRET}
+    access-exp-min: ${SECURITY_JWT_ACCESS_EXP_MIN:?missing SECURITY_JWT_ACCESS_EXP_MIN}
+    refresh:
+      lifetime: ${SECURITY_JWT_REFRESH_LIFETIME:?missing SECURITY_JWT_REFRESH_LIFETIME}
+      purge:
+        cron: ${SECURITY_JWT_REFRESH_PURGE_CRON:?missing SECURITY_JWT_REFRESH_PURGE_CRON}
+
+  otp:
+    echo: true
+
+server:
+  port: 8081
+
 logging:
   level:
+    org.hibernate.SQL: DEBUG
     org.springframework.core.env: INFO
+    org.springframework.mail: DEBUG
+    org.eclipse.angus.mail: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    readinessState:
+      enabled: true
+    livenessState:
+      enabled: true
