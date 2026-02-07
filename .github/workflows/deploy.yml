@@ -57,16 +57,32 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Container App (label)
+      - name: Deploy to Azure Container App (create revision)
         shell: bash
         run: |
           az containerapp update \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_CONTAINERAPP_NAME" \
             --image "$IMAGE" \
-            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}" \
-            --set-labels "${{ steps.target.outputs.label }}=${AZURE_CONTAINERAPP_NAME}--${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
+            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
+            
+      - name: Point label to the new revision
+        shell: bash
+        run: |
+          REVISION="${AZURE_CONTAINERAPP_NAME}--${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
 
+          az containerapp revision label remove \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_CONTAINERAPP_NAME" \
+            --label "${{ steps.target.outputs.label }}" || true
+
+          az containerapp revision label add \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_CONTAINERAPP_NAME" \
+            --label "${{ steps.target.outputs.label }}" \
+            --revision "$REVISION" \
+            --no-prompt
+      
       - name: Smoke test – health
         shell: bash
         run: |
