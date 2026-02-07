@@ -1,36 +1,80 @@
-name: Deploy to Azure Container Apps
+name: Deploy (Azure Container Apps labels)
 
 on:
-  workflow_run:
-    workflows: ["Publish Docker"]
-    types: [completed]
+  push:
+    branches: ["develop", "main"]
 
 permissions:
-  id-token: write
   contents: read
+  packages: write
+
+env:
+  IMAGE_BASE: ghcr.io/${{ github.repository }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_CONTAINERAPP_NAME: ${{ vars.AZURE_CONTAINERAPP_NAME }}
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Azure login (OIDC)
+      - uses: actions/checkout@v4
+
+      - name: Decide target (label + tag + health url)
+        id: target
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "develop" ]]; then
+            echo "label=staging" >> $GITHUB_OUTPUT
+            echo "tag=staging" >> $GITHUB_OUTPUT
+            echo "health=${{ vars.STAGING_HEALTH_URL }}" >> $GITHUB_OUTPUT
+          else
+            echo "label=prod" >> $GITHUB_OUTPUT
+            echo "tag=prod" >> $GITHUB_OUTPUT
+            echo "health=${{ vars.PROD_HEALTH_URL }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build & push image
+        shell: bash
+        run: |
+          IMAGE="${IMAGE_BASE}:${{ steps.target.outputs.tag }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Azure login
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy image to Container App
+      - name: Deploy to Azure Container App (label)
+        shell: bash
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}:latest"
           az containerapp update \
-            -g "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            -n "${{ secrets.AZURE_CONTAINERAPP_NAME }}" \
-            --image "$IMAGE"
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_CONTAINERAPP_NAME" \
+            --image "$IMAGE" \
+            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}" \
+            --set-labels "${{ steps.target.outputs.label }}=${AZURE_CONTAINERAPP_NAME}--${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
 
-      - name: Smoke test (health)
-        if: ${{ secrets.PROD_HEALTH_URL != '' }}
+      - name: Smoke test – health
+        shell: bash
         run: |
-          curl --fail --silent --show-error --max-time 10 "${{ secrets.PROD_HEALTH_URL }}"
+          URL="${{ steps.target.outputs.health }}"
+          echo "Checking $URL ..."
+          curl --fail --silent --show-error \
+               --retry 30 --retry-delay 5 --retry-all-errors \
+               --max-time 10 \
+               "$URL"
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "✅ Deployed $IMAGE to label ${{ steps.target.outputs.label }}" >> $GITHUB_STEP_SUMMARY
