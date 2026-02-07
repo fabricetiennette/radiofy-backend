@@ -1,0 +1,6 @@
+target
+.idea
+.git
+.gradle
+build
+*.iml

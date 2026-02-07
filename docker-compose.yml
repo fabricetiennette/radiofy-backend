@@ -1,0 +1,68 @@
+# Named volume to persist Postgres data locally
+volumes:
+  pgdata:
+
+services:
+  db:
+    image: postgres:17
+    container_name: radiofy_db
+    environment:
+      # Default credentials; will be overridden by .env if present
+      POSTGRES_USER: ${DB_USER:?missing DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS:?missing DB_PASS}
+      POSTGRES_DB: ${DB_NAME:-radiofy_db}
+    ports:
+      # Publishes container's 5432 to host (defaults to 5432)
+      - "${DB_PORT_PUBLISH:-5432}:5432"
+    volumes:
+      # Persist database files between restarts
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Wait until Postgres is ready to accept connections
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:?missing DB_USER} -d ${DB_NAME:-radiofy_db} -h localhost -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Allow running this service under both compose profiles
+    profiles: ["local", "production"]
+    restart: unless-stopped
+  
+  api:
+    # Build the image using the Dockerfile at repository root
+    build: .
+    container_name: radiofy_api
+    depends_on:
+      db:
+        # Ensure API starts only after DB is healthy
+        condition: service_healthy
+    ports:
+      # Publishes container's 8081 to host (defaults to 8081)
+      - "${API_PORT_PUBLISH:-8081}:8081"
+    environment:
+      # Active Spring profile: "local" by default; override for staging
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+
+      # JDBC URL points to the docker network host "db"
+      SPRING_DATASOURCE_URL: ${DOCKER_DATASOURCE_URL:?missing DOCKER_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:?missing DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASS:?missing DB_PASS}
+
+      # ---- JWT ----
+      SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET:?missing SECURITY_JWT_SECRET}
+      SECURITY_JWT_ACCESS_EXP_MIN: ${SECURITY_JWT_ACCESS_EXP_MIN:?missing SECURITY_JWT_ACCESS_EXP_MIN}
+      SECURITY_JWT_REFRESH_LIFETIME: ${SECURITY_JWT_REFRESH_LIFETIME:?missing SECURITY_JWT_REFRESH_LIFETIME}
+      SECURITY_JWT_REFRESH_PURGE_CRON: ${SECURITY_JWT_REFRESH_PURGE_CRON:?missing SECURITY_JWT_REFRESH_PURGE_CRON}
+
+
+      # ---- Email (Spring Mail, 465 SSL) ----
+      SPRING_MAIL_HOST: ${SMTP_HOST:?missing SMTP_HOST}
+      SPRING_MAIL_PORT: "465"
+      SPRING_MAIL_USERNAME: ${SMTP_USERNAME:?missing SMTP_USERNAME}
+      SPRING_MAIL_PASSWORD: ${SMTP_PASSWORD:?missing SMTP_PASSWORD}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "true"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE: "true"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "false"
+
+    # Allow running this service under both compose profiles
+    profiles: ["local", "production"]
+    restart: unless-stopped
