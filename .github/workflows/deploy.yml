@@ -1,0 +1,36 @@
+name: Deploy to Azure Container Apps
+
+on:
+  workflow_run:
+    workflows: ["Publish Docker"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy image to Container App
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}:latest"
+          az containerapp update \
+            -g "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ secrets.AZURE_CONTAINERAPP_NAME }}" \
+            --image "$IMAGE"
+
+      - name: Smoke test (health)
+        if: ${{ secrets.PROD_HEALTH_URL != '' }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 "${{ secrets.PROD_HEALTH_URL }}"
