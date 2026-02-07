@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 env:
   IMAGE_BASE: ghcr.io/${{ github.repository }}
@@ -38,8 +39,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push image
         shell: bash
@@ -52,18 +53,36 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Container App (label)
+      - name: Deploy to Azure Container App (create revision)
         shell: bash
         run: |
           az containerapp update \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_CONTAINERAPP_NAME" \
             --image "$IMAGE" \
-            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}" \
-            --set-labels "${{ steps.target.outputs.label }}=${AZURE_CONTAINERAPP_NAME}--${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
+            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
+            
+      - name: Point label to the new revision
+        shell: bash
+        run: |
+          REVISION="${AZURE_CONTAINERAPP_NAME}--${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
 
+          az containerapp revision label remove \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_CONTAINERAPP_NAME" \
+            --label "${{ steps.target.outputs.label }}" || true
+
+          az containerapp revision label add \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_CONTAINERAPP_NAME" \
+            --label "${{ steps.target.outputs.label }}" \
+            --revision "$REVISION" \
+            --no-prompt
+      
       - name: Smoke test – health
         shell: bash
         run: |
