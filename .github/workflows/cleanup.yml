@@ -1,0 +1,89 @@
+      - name: Safe cleanup - unlabeled revisions only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RG="$AZURE_RESOURCE_GROUP"
+          APP="$AZURE_CONTAINERAPP_NAME"
+          KEEP="$KEEP_UNLABELED"
+
+          echo "🔍 Fetching active revisions for $APP..."
+
+          # Get ALL active revisions
+          ALL_ACTIVE_JSON=$(az containerapp revision list \
+            -g "$RG" -n "$APP" \
+            --query "[?properties.active==\`true\`]" \
+            -o json)
+
+          # 1. Identify CURRENT labeled revisions (prod, staging) - PROTECTED
+          echo "🔒 Identifying protected labeled revisions..."
+          
+          CURRENT_PROD=$(echo "$ALL_ACTIVE_JSON" | jq -r '
+            map(select((.properties.labels // {}).prod != null))
+            | sort_by(.properties.createdTime)
+            | last
+            | .name // empty
+          ')
+          
+          CURRENT_STAGING=$(echo "$ALL_ACTIVE_JSON" | jq -r '
+            map(select((.properties.labels // {}).staging != null))
+            | sort_by(.properties.createdTime)
+            | last
+            | .name // empty
+          ')
+
+          echo "Protected - Prod: ${CURRENT_PROD:-none}, Staging: ${CURRENT_STAGING:-none}"
+
+          # 2. Get unlabeled revisions, EXCLUDING protected ones
+          echo "📦 Filtering unlabeled revisions (excluding protected)..."
+          
+          UNLABELED_REVISIONS=$(echo "$ALL_ACTIVE_JSON" | jq -r --arg prod "$CURRENT_PROD" --arg staging "$CURRENT_STAGING" '
+            map(select((.properties.labels // {}) == {}))
+            | map(select(.name != $prod and .name != $staging))
+            | sort_by(.properties.createdTime)  # OLDEST first
+            | .[].name
+          ')
+
+          if [[ -z "$UNLABELED_REVISIONS" ]]; then
+            echo "✅ No unlabeled revisions to cleanup."
+            exit 0
+          fi
+
+          # Convert to array
+          readarray -t UNLABELED_ARRAY <<< "$UNLABELED_REVISIONS"
+          TOTAL_UNLABELED=${#UNLABELED_ARRAY[@]}
+
+          if (( TOTAL_UNLABELED <= KEEP )); then
+            echo "✅ Nothing to cleanup (TOTAL_UNLABELED=$TOTAL_UNLABELED <= KEEP=$KEEP)."
+            exit 0
+          fi
+
+          echo "Found $TOTAL_UNLABELED unlabeled non-protected revisions"
+
+          # 3. Determine which to deactivate (keep last KEEP, i.e., newest)
+          # Since array is OLDEST first: indices 0..(TOTAL-KEEP-1) = OLDEST to deactivate
+          DEACTIVATE_COUNT=0
+          KEEP_COUNT=0
+          
+          for ((i=0; i<TOTAL_UNLABELED; i++)); do
+            REV="${UNLABELED_ARRAY[$i]}"
+            
+            # OLDEST first: first N are oldest, last KEEP are newest
+            if [[ $i -lt $((TOTAL_UNLABELED - KEEP)) ]]; then
+              # This is one of the OLDEST revisions (not in the last KEEP)
+              echo "🗑️  Deactivating OLD unlabeled revision ($((i + 1))/$TOTAL_UNLABELED): $REV"
+              az containerapp revision deactivate \
+                -g "$RG" -n "$APP" \
+                --revision "$REV" \
+                --no-prompt
+              ((DEACTIVATE_COUNT++))
+            else
+              # This is one of the NEWEST revisions (in the last KEEP to keep)
+              echo "💾 Keeping NEW unlabeled revision ($((i + 1))/$TOTAL_UNLABELED): $REV"
+              ((KEEP_COUNT++))
+            fi
+          done
+
+          echo "✅ Cleanup complete."
+          echo "   Deactivated: $DEACTIVATE_COUNT old unlabeled revisions"
+          echo "   Kept: $KEEP_COUNT newest unlabeled revisions"
