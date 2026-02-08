@@ -1,3 +1,39 @@
+name: Cleanup old revisions
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # daily 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_CONTAINERAPP_NAME: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+  KEEP_UNLABELED: 10
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Install jq
+        shell: bash
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+
+      - name: Authenticate to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          
       - name: Safe cleanup - unlabeled revisions only
         shell: bash
         run: |
