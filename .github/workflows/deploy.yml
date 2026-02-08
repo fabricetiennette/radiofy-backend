@@ -82,7 +82,15 @@ jobs:
             --label "${{ steps.target.outputs.label }}" \
             --revision "$REVISION" \
             --no-prompt
-      
+
+      - name: Set traffic (keep prod as default)
+        shell: bash
+        run: |
+          az containerapp ingress traffic set \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$AZURE_CONTAINERAPP_NAME" \
+            --label-weight prod=100 staging=0 || true
+            
       - name: Smoke test – health
         shell: bash
         run: |
