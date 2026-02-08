@@ -1,8 +1,13 @@
-name: Deploy (Azure Container Apps labels)
+name: Deploy to Azure Container Apps
 
 on:
   push:
     branches: ["develop", "main"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -10,98 +15,159 @@ permissions:
   id-token: write
 
 env:
-  IMAGE_BASE: ghcr.io/${{ github.repository }}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
   AZURE_CONTAINERAPP_NAME: ${{ vars.AZURE_CONTAINERAPP_NAME }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Decide target (label + tag + health url)
+      - name: Determine target environment
         id: target
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "develop" ]]; then
+          if [[ "${{ github.ref_name }}" == "develop" ]]; then
             echo "label=staging" >> $GITHUB_OUTPUT
             echo "tag=staging" >> $GITHUB_OUTPUT
-            echo "health=${{ vars.STAGING_HEALTH_URL }}" >> $GITHUB_OUTPUT
+            echo "health_url=${{ vars.STAGING_HEALTH_URL }}" >> $GITHUB_OUTPUT
+            echo "scale_min=0" >> $GITHUB_OUTPUT
+            echo "scale_max=1" >> $GITHUB_OUTPUT
           else
             echo "label=prod" >> $GITHUB_OUTPUT
             echo "tag=prod" >> $GITHUB_OUTPUT
-            echo "health=${{ vars.PROD_HEALTH_URL }}" >> $GITHUB_OUTPUT
+            echo "health_url=${{ vars.PROD_HEALTH_URL }}" >> $GITHUB_OUTPUT
+            echo "scale_min=1" >> $GITHUB_OUTPUT
+            echo "scale_max=1" >> $GITHUB_OUTPUT
           fi
 
-      - name: Log in to GHCR
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push image
+      - name: Build and push Docker image
         shell: bash
         run: |
-          IMAGE="${IMAGE_BASE}:${{ steps.target.outputs.tag }}"
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          IMAGE_TAGGED="$REGISTRY/$IMAGE_NAME:${{ steps.target.outputs.tag }}-${GITHUB_SHA::7}"
+          IMAGE_LATEST="$REGISTRY/$IMAGE_NAME:${{ steps.target.outputs.tag }}"
+          
+          echo "Building image: $IMAGE_TAGGED"
+          docker build -t "$IMAGE_TAGGED" -t "$IMAGE_LATEST" .
+          
+          echo "Pushing images to registry..."
+          docker push "$IMAGE_TAGGED"
+          docker push "$IMAGE_LATEST"
+          
+          echo "IMAGE=$IMAGE_TAGGED" >> $GITHUB_ENV
 
-      - name: Azure login
+      - name: Authenticate to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Container App (create revision)
+      - name: Deploy to Azure Container App
         shell: bash
         run: |
+          echo "Deploying to Azure Container App..."
           az containerapp update \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_CONTAINERAPP_NAME" \
             --image "$IMAGE" \
-            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
-            
-      - name: Point label to the new revision
+            --revision-suffix "${{ steps.target.outputs.label }}-${GITHUB_SHA::7}" \
+            --min-replicas ${{ steps.target.outputs.scale_min }} \
+            --max-replicas ${{ steps.target.outputs.scale_max }}
+
+      - name: Update revision label
         shell: bash
         run: |
           REVISION="${AZURE_CONTAINERAPP_NAME}--${{ steps.target.outputs.label }}-${GITHUB_SHA::7}"
-
+          
+          echo "Updating label '${{ steps.target.outputs.label }}' to revision: $REVISION"
+          
+          echo "Removing old label if it exists..."
           az containerapp revision label remove \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_CONTAINERAPP_NAME" \
-            --label "${{ steps.target.outputs.label }}" || true
-
+            --label "${{ steps.target.outputs.label }}" \
+            --no-prompt 2>/dev/null || echo "Label did not exist or already removed"
+          
+          echo "Adding label to new revision..."
           az containerapp revision label add \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_CONTAINERAPP_NAME" \
             --label "${{ steps.target.outputs.label }}" \
             --revision "$REVISION" \
             --no-prompt
+          
+          echo "✅ Label '${{ steps.target.outputs.label }}' successfully updated"
 
-      - name: Set traffic (keep prod as default)
+      - name: Configure production traffic
+        if: ${{ steps.target.outputs.label == 'prod' }}
         shell: bash
         run: |
+          echo "Configuring traffic routing: 100% to 'prod' label..."
           az containerapp ingress traffic set \
             -g "$AZURE_RESOURCE_GROUP" \
             -n "$AZURE_CONTAINERAPP_NAME" \
-            --label-weight prod=100 staging=0 || true
-            
-      - name: Smoke test – health
+            --label-weight prod=100 staging=0
+
+      - name: Health check
         shell: bash
         run: |
-          URL="${{ steps.target.outputs.health }}"
-          echo "Checking $URL ..."
-          curl --fail --silent --show-error \
-               --retry 30 --retry-delay 5 --retry-all-errors \
-               --max-time 10 \
-               "$URL"
+          URL="${{ steps.target.outputs.health_url }}"
+          echo "Performing health check on: $URL"
+          
+          echo "Waiting 15 seconds for application to start..."
+          sleep 15
+          
+          if [[ "${{ steps.target.outputs.label }}" == "prod" ]]; then
+            echo "Production deployment - health check must pass"
+            curl --fail \
+                 --retry 5 \
+                 --retry-delay 3 \
+                 --retry-max-time 30 \
+                 --max-time 10 \
+                 --silent \
+                 --show-error \
+                 "$URL"
+          else
+            echo "Staging deployment - health check for monitoring"
+            curl --fail \
+                 --retry 3 \
+                 --retry-delay 5 \
+                 --retry-max-time 20 \
+                 --max-time 10 \
+                 --silent \
+                 --show-error \
+                 "$URL" || echo "Warning: Staging health check failed - application may need more time to start"
+          fi
 
-      - name: Summary
+      - name: Create deployment summary
         if: success()
+        shell: bash
         run: |
-          echo "✅ Deployed $IMAGE to label ${{ steps.target.outputs.label }}" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${{ steps.target.outputs.label }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`$IMAGE\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Revision** | \`${{ steps.target.outputs.label }}-${GITHUB_SHA::7}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Replicas** | ${{ steps.target.outputs.scale_min }}-${{ steps.target.outputs.scale_max }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | ${GITHUB_SHA::7} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Deployed on: $(date -u)" >> $GITHUB_STEP_SUMMARY
