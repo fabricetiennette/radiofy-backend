@@ -1,6 +1,10 @@
 package io.github.fabricetiennette.radiofy.backend.config;
 
+import io.github.fabricetiennette.radiofy.backend.auth.jwt.JwtAuthenticationFilter;
+import io.github.fabricetiennette.radiofy.backend.auth.security.CustomAccessDeniedHandler;
+import io.github.fabricetiennette.radiofy.backend.auth.security.CustomAuthenticationEntryPoint;
 import org.springframework.context.annotation.Bean;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -11,6 +15,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -18,7 +23,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 @Configuration
+@RequiredArgsConstructor
 public class SecurityConfig {
+
+    private final CustomAuthenticationEntryPoint authEntryPoint;
+    private final CustomAccessDeniedHandler accessDeniedHandler;
 
     @Bean
     PasswordEncoder passwordEncoder() {
@@ -28,6 +37,13 @@ public class SecurityConfig {
     @Bean
     AuthenticationManager authenticationManager(AuthenticationConfiguration cfg) throws Exception {
         return cfg.getAuthenticationManager();
+    }
+
+    @Bean
+    DaoAuthenticationProvider authProvider(UserDetailsService uds, PasswordEncoder encoder) {
+        var p = new DaoAuthenticationProvider(uds);
+        p.setPasswordEncoder(encoder);
+        return p;
     }
 
     @Bean
@@ -43,7 +59,9 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                            JwtAuthenticationFilter jwtFilter,
+                                            DaoAuthenticationProvider authProvider) throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(c -> c.configurationSource(corsConfigurationSource()))
@@ -61,6 +79,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/radiofy/**").authenticated()
                         .anyRequest().authenticated()
                 )
+                .authenticationProvider(authProvider)
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 }

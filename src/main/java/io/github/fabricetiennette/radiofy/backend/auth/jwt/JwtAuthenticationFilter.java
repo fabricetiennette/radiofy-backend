@@ -17,6 +17,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -39,7 +40,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
 
         if (header == null || !header.startsWith("Bearer ")) {
-            // Pas de jeton -> laisser Spring Security gérer (EntryPoint 401 si nécessaire)
+
             chain.doFilter(request, response);
             return;
         }
@@ -47,11 +48,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = header.substring(7);
 
         try {
-            String subject = jwt.getSubject(token); // peut jeter des exceptions jjwt
+            String subject = jwt.getSubject(token);
 
-            // Déjà authentifié ? alors on ne réauthentifie pas
             if (subject != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                UserDetails user = uds.loadUserByUsername(subject);
+                final UserDetails user;
+                try {
+                    user = uds.loadUserByUsername(subject);
+                } catch (UsernameNotFoundException ex) {
+                    // Token is valid but the account was deleted (or no longer exists).
+                    SecurityContextHolder.clearContext();
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
+                }
 
                 if (jwt.isTokenValid(token, user.getUsername())) {
                     var auth = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());

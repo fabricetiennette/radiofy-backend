@@ -43,4 +43,9 @@ public class UserServiceImpl implements UserService {
             repo.save(user);
         });
     }
+
+    @Override
+    public void deleteByEmail(String email) {
+        repo.findByEmail(email).ifPresent(repo::delete);
+    }
 }

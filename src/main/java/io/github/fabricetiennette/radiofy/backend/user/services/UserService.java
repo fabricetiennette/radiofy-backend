@@ -6,8 +6,7 @@ import java.util.Optional;
 
 public interface UserService {
     void register(String email, String rawPassword);
+    void deleteByEmail(String email);
     void markEmailVerified(String email);
-//    void archiveAndDeleteByEmail(String email);
     Optional<UserAccount> findByEmail(String email);
-//    Optional<UserAccount>  delete(UserAccount userAccount);
 }
