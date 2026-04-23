@@ -9,4 +9,6 @@ public interface UserService {
     void deleteByEmail(String email);
     void markEmailVerified(String email);
     Optional<UserAccount> findByEmail(String email);
+    UserAccount findOrCreateAppleUser(String email, String appleSubject);
+    Optional<UserAccount> findByAppleSubject(String appleSubject);
 }

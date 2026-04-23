@@ -11,3 +11,6 @@ spring:
       mail.smtp.starttls.enable: false
       mail.smtp.ssl.enable: false
       mail.smtp.port: 1025
+
+apple:
+  client-id: ${APPLE_CLIENT_ID}
