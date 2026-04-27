@@ -11,3 +11,6 @@ security:
       lifetime: 43200
       purge:
         cron: "0 0 3 * * *"
+
+apple:
+  client-id: test.apple.client.id
