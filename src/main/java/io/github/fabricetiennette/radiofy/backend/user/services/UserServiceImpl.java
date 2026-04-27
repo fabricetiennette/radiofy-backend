@@ -1,5 +1,7 @@
 package io.github.fabricetiennette.radiofy.backend.user.services;
 
+import io.github.fabricetiennette.radiofy.backend.user.enums.AuthProvider;
+
 import io.github.fabricetiennette.radiofy.backend.user.entities.UserAccount;
 import io.github.fabricetiennette.radiofy.backend.user.repositoties.UserAccountRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +36,30 @@ public class UserServiceImpl implements UserService {
     @Override
     public Optional<UserAccount> findByEmail(String email) {
         return repo.findByEmail(email);
+    }
+
+    @Override
+    public UserAccount findOrCreateAppleUser(String email, String appleSubject) {
+        return repo.findByAppleSubject(appleSubject)
+                .orElseGet(() -> {
+                    if (repo.existsByEmail(email)) {
+                        throw new IllegalArgumentException("Email already in use");
+                    }
+
+                    var user = new UserAccount();
+                    user.setEmail(email);
+                    user.setAppleSubject(appleSubject);
+                    user.setAuthProvider(AuthProvider.APPLE);
+                    user.setEmailVerifiedAt(Instant.now());
+                    user.setRole("USER");
+
+                    return repo.save(user);
+                });
+    }
+
+    @Override
+    public Optional<UserAccount> findByAppleSubject(String appleSubject) {
+        return repo.findByAppleSubject(appleSubject);
     }
 
     @Override

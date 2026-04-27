@@ -67,3 +67,6 @@ management:
       enabled: true
     livenessState:
       enabled: true
+
+apple:
+  client-id: ${APPLE_CLIENT_ID}

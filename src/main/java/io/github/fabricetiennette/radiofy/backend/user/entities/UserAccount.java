@@ -1,5 +1,6 @@
 package io.github.fabricetiennette.radiofy.backend.user.entities;
 
+import io.github.fabricetiennette.radiofy.backend.user.enums.AuthProvider;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -21,14 +22,21 @@ public class UserAccount {
     @GeneratedValue
     private UUID id;
 
-    @Column(name = "legacy_firebase_uid", length = 128, unique = true)
-    private String legacyFirebaseUid;
-
     @Column(nullable = false, length = 150)
     private String email;
 
-    @Column(nullable = false)
+    @Column(name = "apple_subject", length = 255, unique = true)
+    private String appleSubject;
+
+    @Column
     private String passwordHash;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private AuthProvider authProvider = AuthProvider.LOCAL;
+
+    @Column(name = "legacy_firebase_uid", length = 128, unique = true)
+    private String legacyFirebaseUid;
 
     @Column(nullable = false, length = 150)
     private String displayName;

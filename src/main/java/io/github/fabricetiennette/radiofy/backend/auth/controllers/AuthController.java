@@ -4,6 +4,9 @@ import io.github.fabricetiennette.radiofy.backend.auth.dtos.AuthResponse;
 import io.github.fabricetiennette.radiofy.backend.auth.dtos.LoginRequest;
 import io.github.fabricetiennette.radiofy.backend.auth.dtos.RefreshRequest;
 import io.github.fabricetiennette.radiofy.backend.auth.dtos.RegisterRequest;
+import io.github.fabricetiennette.radiofy.backend.auth.apple.dtos.AppleSignInRequest;
+import io.github.fabricetiennette.radiofy.backend.user.entities.UserAccount;
+import io.github.fabricetiennette.radiofy.backend.auth.apple.services.AppleIdentityService;
 import io.github.fabricetiennette.radiofy.backend.auth.jwt.JwtService;
 import io.github.fabricetiennette.radiofy.backend.auth.otp.services.OtpService;
 import io.github.fabricetiennette.radiofy.backend.auth.refresh.entities.RefreshToken;
@@ -39,6 +42,8 @@ public class AuthController {
     private final UserService userService;
     private final OtpService otpService;
     private final RefreshTokenService refreshTokenService;
+
+    private final AppleIdentityService appleIdentityService;
 
     private record VerifyEmailRequest(String email, String code) {}
 
@@ -100,6 +105,42 @@ public class AuthController {
         String refresh = refreshTokenService.issueInitialRefreshToken(u, ip, userAgent);
 
         return ResponseEntity.ok(AuthResponse.of(access, refresh));
+    }
+
+    @PostMapping("/apple")
+    public ResponseEntity<?> signInWithApple(@RequestBody AppleSignInRequest req, HttpServletRequest httpRequest) {
+        if (req.idToken() == null || req.idToken().isBlank()) {
+            return ResponseEntity.badRequest().body(
+                    ErrorResponse.of("Bad Request", "INVALID_REQUEST", "Apple identity token is required.", httpRequest.getRequestURI())
+            );
+        }
+
+        try {
+            var identity = appleIdentityService.verify(req.idToken());
+
+            var existingAppleUser = userService.findByAppleSubject(identity.subject());
+            if (existingAppleUser.isPresent()) {
+                return ResponseEntity.ok(issueSession(existingAppleUser.get(), httpRequest));
+            }
+
+            if (identity.email() == null || identity.email().isBlank()) {
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+                        ErrorResponse.of(
+                                "Unprocessable Entity",
+                                "APPLE_EMAIL_REQUIRED",
+                                "Apple account email is required to create a new user.",
+                                httpRequest.getRequestURI()
+                        )
+                );
+            }
+
+            var user = userService.findOrCreateAppleUser(identity.email(), identity.subject());
+            return ResponseEntity.ok(issueSession(user, httpRequest));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ErrorResponse.of("Unauthorized", "INVALID_APPLE_TOKEN", e.getMessage(), httpRequest.getRequestURI())
+            );
+        }
     }
 
     @PostMapping("/refresh")
@@ -184,5 +225,15 @@ public class AuthController {
 
         // Always 204 to avoid user enumeration
         return ResponseEntity.noContent().build();
+    }
+
+    private AuthResponse issueSession(UserAccount user, HttpServletRequest httpRequest) {
+        String access = jwt.generateAccess(user.getEmail(), Map.of("typ", "access"));
+
+        String ip = httpRequest.getRemoteAddr();
+        String userAgent = httpRequest.getHeader("User-Agent");
+        String refresh = refreshTokenService.issueInitialRefreshToken(user, ip, userAgent);
+
+        return AuthResponse.of(access, refresh);
     }
 }
