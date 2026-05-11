@@ -15,6 +15,10 @@ public class RadioBrowserGateway {
 
     private final RestClient restClient;
 
+    // ⚠️ pas encore de découverte dynamique des serveurs Radio
+    //
+    //⚠️ pas encore de fallback automatique si base-url tombe
+
     public RadioBrowserGateway(
             @Value("${radio-browser.base-url}") String baseUrl,
             @Value("${radio-browser.user-agent}") String userAgent
