@@ -56,6 +56,10 @@ services:
       # --- Apple ----
       APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:?missing APPLE_CLIENT_ID}
 
+      # --- Radio ----
+      RADIO_BROWSER_BASE_URL: ${RADIO_BROWSER_BASE_URL:?missing RADIO_BROWSER_BASE_URL}
+      RADIO_BROWSER_USER_AGENT: ${RADIO_BROWSER_USER_AGENT:?missing RADIO_BROWSER_USER_AGENT}
+
       # ---- Email (Spring Mail, 465 SSL) ----
       SPRING_MAIL_HOST: ${SMTP_HOST:?missing SMTP_HOST}
       SPRING_MAIL_PORT: "465"

@@ -14,3 +14,7 @@ spring:
 
 apple:
   client-id: ${APPLE_CLIENT_ID}
+
+radio-browser:
+  base-url: ${RADIO_BROWSER_BASE_URL:?missing RADIO_BROWSER_BASE_URL}
+  user-agent: ${RADIO_BROWSER_USER_AGENT:?missing RADIO_BROWSER_USER_AGENT}
