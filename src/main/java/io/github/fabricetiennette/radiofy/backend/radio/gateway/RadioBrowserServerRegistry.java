@@ -38,7 +38,19 @@ public class RadioBrowserServerRegistry {
     private Instant resolvedAt = Instant.EPOCH;
 
     public RadioBrowserServerRegistry(@Value("${radio-browser.base-url}") String baseUrl) {
-        this.fallbackHost = URI.create(baseUrl).getHost();
+        this.fallbackHost = hostOf(baseUrl);
+    }
+
+    /// The configured URL is only a safety net, so a malformed or absent value must
+    /// not stop the application from starting. Discovery is the real source here.
+    private static String hostOf(String baseUrl) {
+        try {
+            String host = URI.create(baseUrl).getHost();
+            return host == null || host.isBlank() ? null : host;
+        } catch (IllegalArgumentException e) {
+            log.warn("radio-browser.base-url is not a usable URL ({}), relying on SRV discovery alone", baseUrl);
+            return null;
+        }
     }
 
     /// Shuffled on every call, so load spreads across the fleet instead of everyone
@@ -56,14 +68,20 @@ public class RadioBrowserServerRegistry {
     private void refresh() {
         List<String> resolved = lookupSrv();
 
-        if (resolved.isEmpty()) {
+        if (resolved.isEmpty() && fallbackHost != null) {
             log.warn("Radio Browser SRV lookup returned nothing, falling back to {}", fallbackHost);
             resolved = List.of(fallbackHost);
         }
 
         hosts = resolved;
         resolvedAt = Instant.now();
-        log.info("Radio Browser servers discovered: {}", hosts);
+
+        if (hosts.isEmpty()) {
+            // Callers turn an empty fleet into a 503, which is the honest answer.
+            log.warn("No Radio Browser server could be discovered.");
+        } else {
+            log.info("Radio Browser servers discovered: {}", hosts);
+        }
     }
 
     private List<String> lookupSrv() {
