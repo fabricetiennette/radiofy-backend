@@ -44,6 +44,14 @@ public class StationsController {
         return service.searchStations(q, limit, offset);
     }
 
+    @GetMapping("/suggest")
+    public List<String> suggest(
+            @RequestParam @NotBlank String q,
+            @RequestParam(defaultValue = "3") @Min(1) @Max(10) int limit
+    ) {
+        return service.suggest(q, limit);
+    }
+
     @GetMapping("/{stationUuid}/stream-url")
     public Map<String, String> streamUrl(
             @PathVariable @NotBlank String stationUuid

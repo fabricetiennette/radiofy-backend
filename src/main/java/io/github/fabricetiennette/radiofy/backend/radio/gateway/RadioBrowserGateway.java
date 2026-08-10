@@ -1,12 +1,15 @@
 package io.github.fabricetiennette.radiofy.backend.radio.gateway;
 
 import io.github.fabricetiennette.radiofy.backend.radio.dto.RadioBrowserStationDto;
+import io.github.fabricetiennette.radiofy.backend.radio.dto.RadioBrowserTagDto;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.ReactorClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,11 +24,21 @@ public class RadioBrowserGateway {
 
     public RadioBrowserGateway(
             @Value("${radio-browser.base-url}") String baseUrl,
-            @Value("${radio-browser.user-agent}") String userAgent
+            @Value("${radio-browser.user-agent}") String userAgent,
+            @Value("${radio-browser.connect-timeout:2s}") Duration connectTimeout,
+            @Value("${radio-browser.read-timeout:3s}") Duration readTimeout
     ) {
+        // Radio Browser drops out often enough that the default wait — around fifteen
+        // seconds — turns a hiccup into a hung request. Failing fast is the right
+        // trade here: a suggestion is worthless once the user has stopped typing.
+        var requestFactory = new ReactorClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(connectTimeout);
+        requestFactory.setReadTimeout(readTimeout);
+
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
                 .defaultHeader(HttpHeaders.USER_AGENT, userAgent)
+                .requestFactory(requestFactory)
                 .build();
     }
 
@@ -71,6 +84,23 @@ public class RadioBrowserGateway {
                 .body(new ParameterizedTypeReference<>() {
                 });
         return Optional.ofNullable(stations).orElse(List.of());
+    }
+
+    /// Tags matching a prefix, most used first. Without the explicit ordering the
+    /// endpoint answers alphabetically, which puts "1.fm jazz" ahead of "jazz".
+    public List<RadioBrowserTagDto> searchTags(String filter, int limit) {
+        List<RadioBrowserTagDto> tags = restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/json/tags/{filter}")
+                        .queryParam("limit", limit)
+                        .queryParam("order", "stationcount")
+                        .queryParam("reverse", true)
+                        .queryParam("hidebroken", true)
+                        .build(filter))
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {
+                });
+        return Optional.ofNullable(tags).orElse(List.of());
     }
 
     public String resolveStreamUrl(String stationUuid) {
