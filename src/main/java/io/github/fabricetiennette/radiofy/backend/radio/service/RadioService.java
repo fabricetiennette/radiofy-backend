@@ -78,7 +78,9 @@ public class RadioService {
         int safeLimit = clampLimit(limit);
         int safeOffset = Math.max(offset, 0);
 
-        return radioBrowserGateway.browse(countryCode, tag, safeLimit, safeOffset)
+        // Browsing hits the same directory, so it carries the same duplicates.
+        return StationDeduplicator.deduplicate(
+                        radioBrowserGateway.browse(countryCode, tag, safeLimit, safeOffset))
                 .stream()
                 .map(RadioStationMapper::toRadiofyDto)
                 .toList();
@@ -136,31 +138,36 @@ public class RadioService {
             int limit,
             int offset
     ) {
-        Set<String> seen = new LinkedHashSet<>();
-        List<RadiofyStationDto> merged = new ArrayList<>();
+        Set<String> seenIds = new LinkedHashSet<>();
+        List<RadioBrowserStationDto> interleaved = new ArrayList<>();
 
         int rounds = Math.max(nameHits.size(), tagHits.size());
         for (int i = 0; i < rounds; i++) {
             if (i < nameHits.size()) {
-                addStation(nameHits.get(i), seen, merged);
+                addStation(nameHits.get(i), seenIds, interleaved);
             }
             if (i < tagHits.size()) {
-                addStation(tagHits.get(i), seen, merged);
+                addStation(tagHits.get(i), seenIds, interleaved);
             }
         }
 
-        return merged.stream()
+        // Paging comes after collapsing duplicates, otherwise a page of ten could
+        // shrink to four once the copies of one station are folded together.
+        return StationDeduplicator.deduplicate(interleaved).stream()
                 .skip(offset)
                 .limit(limit)
+                .map(RadioStationMapper::toRadiofyDto)
                 .toList();
     }
 
-    private void addStation(RadioBrowserStationDto station, Set<String> seen, List<RadiofyStationDto> merged) {
-        if (station == null || station.stationuuid() == null || !seen.add(station.stationuuid())) {
+    /// Only removes the exact same entry appearing in both sources. Recognising
+    /// several entries as one station is `StationDeduplicator`'s job.
+    private void addStation(RadioBrowserStationDto station, Set<String> seenIds, List<RadioBrowserStationDto> collected) {
+        if (station == null || station.stationuuid() == null || !seenIds.add(station.stationuuid())) {
             return;
         }
 
-        merged.add(RadioStationMapper.toRadiofyDto(station));
+        collected.add(station);
     }
 
     /// Returns null when the call itself failed, which `searchStations` needs to tell
