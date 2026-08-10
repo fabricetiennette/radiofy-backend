@@ -1,5 +1,6 @@
 package io.github.fabricetiennette.radiofy.backend.error;
 
+import io.github.fabricetiennette.radiofy.backend.radio.gateway.RadioBrowserUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,23 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.CONFLICT)
     public ErrorResponse handleConflict(DataIntegrityViolationException ex, HttpServletRequest req) {
         return new ErrorResponse("Conflict", "CONFLICT", "Constraint violated", Instant.now(), req.getRequestURI());
+    }
+
+    /// 503 rather than 500: nothing is broken here, the station directory we depend on
+    /// is down. It also tells the client the right thing to do — come back later —
+    /// where a 500 suggests a bug and invites no retry.
+    @ExceptionHandler(RadioBrowserUnavailableException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public ErrorResponse handleRadioBrowserUnavailable(RadioBrowserUnavailableException ex, HttpServletRequest req) {
+        log.warn("Radio Browser unavailable on {}: {}", req.getRequestURI(), ex.getMessage());
+
+        return new ErrorResponse(
+                "Service Unavailable",
+                "RADIO_DIRECTORY_UNAVAILABLE",
+                "The station directory is temporarily unavailable. Please try again.",
+                Instant.now(),
+                req.getRequestURI()
+        );
     }
 
     @ExceptionHandler(Exception.class)

@@ -18,3 +18,7 @@ apple:
 radio-browser:
   base-url: ${RADIO_BROWSER_BASE_URL:?missing RADIO_BROWSER_BASE_URL}
   user-agent: ${RADIO_BROWSER_USER_AGENT:?missing RADIO_BROWSER_USER_AGENT}
+  # Radio Browser is regularly unreachable. Without these the client waits about
+  # fifteen seconds, which turns a hiccup into a hung request.
+  connect-timeout: ${RADIO_BROWSER_CONNECT_TIMEOUT:2s}
+  read-timeout: ${RADIO_BROWSER_READ_TIMEOUT:3s}
