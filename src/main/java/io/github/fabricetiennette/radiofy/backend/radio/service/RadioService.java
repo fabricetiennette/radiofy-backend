@@ -4,6 +4,7 @@ import io.github.fabricetiennette.radiofy.backend.radio.dto.RadioBrowserStationD
 import io.github.fabricetiennette.radiofy.backend.radio.dto.RadioBrowserTagDto;
 import io.github.fabricetiennette.radiofy.backend.radio.dto.RadiofyStationDto;
 import io.github.fabricetiennette.radiofy.backend.radio.gateway.RadioBrowserGateway;
+import io.github.fabricetiennette.radiofy.backend.radio.gateway.RadioBrowserUnavailableException;
 import io.github.fabricetiennette.radiofy.backend.radio.mapper.RadioStationMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,9 @@ public class RadioService {
         this.radioBrowserGateway = radioBrowserGateway;
     }
 
+    /// Searches names and tags, because the two answer different intents: "France
+    /// Inter" is a name, "jazz" is a genre. A station tagged jazz but named "Blue
+    /// Note Radio" is invisible to a name-only search.
     public List<RadiofyStationDto> searchStations(String q, int limit, int offset) {
         String query = q == null ? "" : q.trim();
         if (query.isBlank()) {
@@ -41,11 +45,33 @@ public class RadioService {
 
         int safeLimit = clampLimit(limit);
         int safeOffset = Math.max(offset, 0);
+        // The two sources are merged before paging, so each has to cover the whole
+        // window rather than just its own slice of it.
+        int fetchSize = clampLimit(safeLimit + safeOffset);
 
-        return radioBrowserGateway.searchByName(query, safeLimit, safeOffset)
-                .stream()
-                .map(RadioStationMapper::toRadiofyDto)
-                .toList();
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<List<RadioBrowserStationDto>> byName = executor.submit(() ->
+                    radioBrowserGateway.searchByName(query, fetchSize, 0));
+
+            Future<List<RadioBrowserStationDto>> byTag = executor.submit(() ->
+                    radioBrowserGateway.browse(null, query, fetchSize, 0));
+
+            List<RadioBrowserStationDto> nameHits = awaitOrNull("name search", byName);
+            List<RadioBrowserStationDto> tagHits = awaitOrNull("tag search", byTag);
+
+            // One source failing still gives usable results; both failing is a real
+            // outage and has to surface rather than look like "no station found".
+            if (nameHits == null && tagHits == null) {
+                throw new RadioBrowserUnavailableException("Radio Browser is unreachable.");
+            }
+
+            return mergeStations(
+                    nameHits == null ? List.of() : nameHits,
+                    tagHits == null ? List.of() : tagHits,
+                    safeLimit,
+                    safeOffset
+            );
+        }
     }
 
     public List<RadiofyStationDto> browseStations(String countryCode, String tag, int limit, int offset) {
@@ -99,6 +125,56 @@ public class RadioService {
         }
 
         return radioBrowserGateway.resolveStreamUrl(safeStationUuid);
+    }
+
+    /// Alternates the two sources rather than listing names first: on "jazz" the name
+    /// matches alone would fill the page and bury every station that is tagged jazz
+    /// without saying so in its name.
+    private List<RadiofyStationDto> mergeStations(
+            List<RadioBrowserStationDto> nameHits,
+            List<RadioBrowserStationDto> tagHits,
+            int limit,
+            int offset
+    ) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<RadiofyStationDto> merged = new ArrayList<>();
+
+        int rounds = Math.max(nameHits.size(), tagHits.size());
+        for (int i = 0; i < rounds; i++) {
+            if (i < nameHits.size()) {
+                addStation(nameHits.get(i), seen, merged);
+            }
+            if (i < tagHits.size()) {
+                addStation(tagHits.get(i), seen, merged);
+            }
+        }
+
+        return merged.stream()
+                .skip(offset)
+                .limit(limit)
+                .toList();
+    }
+
+    private void addStation(RadioBrowserStationDto station, Set<String> seen, List<RadiofyStationDto> merged) {
+        if (station == null || station.stationuuid() == null || !seen.add(station.stationuuid())) {
+            return;
+        }
+
+        merged.add(RadioStationMapper.toRadiofyDto(station));
+    }
+
+    /// Returns null when the call itself failed, which `searchStations` needs to tell
+    /// apart from a source that simply had nothing to offer.
+    private <T> List<T> awaitOrNull(String name, Future<List<T>> task) {
+        try {
+            return task.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            log.warn("Search source '{}' unavailable: {}", name, e.getCause().getMessage());
+            return null;
+        }
     }
 
     /// Alternates between the sources so a broad category and a concrete station both
